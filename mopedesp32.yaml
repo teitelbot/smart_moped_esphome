@@ -1,0 +1,310 @@
+esphome:
+  name: mopedesp32
+  platform: ESP32
+  board: nodemcu-32s
+  
+wifi:
+  ssid: !secret wifissid
+  password: !secret wifipass
+  manual_ip:
+    static_ip: 192.168.1.153
+    gateway: 192.168.1.1
+    subnet: 255.255.255.0
+
+  ap:
+    ssid: "Moped-Test Fallback Hotspot"
+    password: !secret wifipass
+    
+captive_portal:
+
+web_server:
+  port: 80
+  
+logger:
+  # baud_rate: 0 DO NOT UNCOMMENT
+
+ota:
+
+# Configure each pixel as a single light (attention memory consuming)
+light:
+  - platform: neopixelbus
+    variant: WS2812
+    id: light_fastled
+    pin: 23
+    num_leds: 300
+    type: GRB
+    name: "Infostrip"
+    effects:
+      - addressable_rainbow:
+          name: Rainbow mega fast
+          speed: 20
+          width: 150
+      - strobe:
+          colors:
+            - state: true
+              brightness: 50%
+              red: 100%
+              green: 0%
+              blue: 0%
+              duration: 500ms
+            - state: false
+              duration: 50ms
+            - state: true
+              brightness: 50%
+              red: 0%
+              green: 0%
+              blue: 100%
+              duration: 500ms
+            - state: false
+              duration: 50ms
+
+
+  
+uart:
+  tx_pin: 5
+  rx_pin: GPIO3
+  baud_rate: 9600
+
+dfplayer:
+  on_finished_playback:
+    then:
+      - logger.log: 'Playback finished event'
+
+sensor:   
+  - platform: uptime
+    name: Uptime Sensor
+    update_interval: 1s
+  # - platform: ultrasonic
+  #   trigger_pin: 18
+  #   echo_pin: 19
+  #   name: "Moped Ultrasonic Sensor"
+  #   id: ultrasonic_moped
+  #   update_interval: 2.0s
+  #   filters:
+  #     - throttle: 5s
+  #   on_value:
+  #     then:
+  #       - if:
+  #           condition:
+  #             and:
+  #               - sensor.in_range:
+  #                   id: ultrasonic_moped
+  #                   above: 1
+  #               - for:
+  #                   time: 30s
+  #                   condition:
+  #                     switch.is_on: relay
+  #           then:
+  #             - switch.turn_off:
+  #                 id: relay
+
+
+switch:
+  - platform: gpio
+    name: "Moped Relay"
+    pin:
+      number: 32
+    id: relay
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:
+      # - dfplayer.set_device: TF_CARD
+      # - delay: 1s
+      - dfplayer.set_volume: 30
+      - dfplayer.play_folder:
+          folder: 03
+          file: 001
+      - delay: 4s
+      - switch.turn_on: mosfet_light
+      - switch.turn_on: mosfet_power_light
+      - light.turn_off:
+          id: light_fastled
+
+    on_turn_off:
+      - switch.turn_off: mosfet_light
+      - switch.turn_off: mosfet_power_light
+      - dfplayer.set_volume: 30
+      - dfplayer.play_folder:
+          folder: 01
+          file: 001
+      - delay: 4s
+      - light.turn_off:
+          id: light_fastled
+      - switch.turn_off: mosfet_light
+      - switch.turn_off: mosfet_power_light
+      # - dfplayer.sleep
+      
+      
+  - platform: gpio
+    name: "Moped Mosfet Light"
+    id: mosfet_light
+    pin: 21
+  - platform: gpio
+    name: "Moped Mosfet power light"
+    id: mosfet_power_light
+    pin: 18
+
+spi:
+  clk_pin: 14
+  mosi_pin: 13
+  miso_pin: 12
+  id: "rfidspibus"
+  
+rc522_spi: # or rc522_i2c
+  cs_pin: 27
+  reset_pin: GPIO17
+  update_interval: 1s
+  spi_id: "rfidspibus"
+  
+binary_sensor:
+  - platform: rc522
+    uid: FC-41-0C-4A
+    name: "RC522 RFID Moped Tag1"  
+    on_press:
+      then:
+        - switch.toggle: relay
+  - platform: rc522
+    uid: 93-D9-B9-18
+    name: "RC522 RFID Moped Tag2"  
+    on_press:
+      then:
+        - switch.toggle: relay
+  - platform: rc522
+    uid: 5C-7F-0A-49
+    name: "RC522 RFID Moped Tag3"  
+    on_press:
+      then:
+        - switch.toggle: relay
+  - platform: rc522
+    uid: 13-66-89-1A
+    name: "RC522 RFID Moped Tag4"  
+    on_press:
+      then:
+        # - switch.toggle: relay
+        - switch.turn_on: relay
+        - light.turn_on:
+            brightness: 75%
+            id: light_fastled
+            effect: Rainbow mega fast
+    on_release:
+      then:
+        - switch.turn_off: relay
+        
+
+  - platform: gpio
+    pin: 22
+    name: "moped vibration"
+    device_class: vibration
+    id: vibration
+    filters:
+      - delayed_off: 4000ms
+    on_press:
+      then:
+        - if:
+            condition:
+              - for:
+                  time: 3s
+                  condition:
+                    switch.is_off: relay
+            then:
+              - light.turn_on:
+                  id: light_fastled
+                  effect: strobe
+              - dfplayer.set_device: TF_CARD
+              # - delay: 1s
+              - dfplayer.play_next:
+              - delay: 8s
+              - light.turn_off:
+                  id: light_fastled
+              - delay: 10s
+              # - dfplayer.sleep
+        
+# Enable Home Assistant API
+api:
+  reboot_timeout: 0s
+  services:
+  - service: dfplayer_next
+    then:
+      - dfplayer.play_next:
+  - service: dfplayer_previous
+    then:
+      - dfplayer.play_previous:
+  - service: dfplayer_play
+    variables:
+      file: int
+    then:
+      - dfplayer.play: !lambda 'return file;'
+  - service: dfplayer_play_loop
+    variables:
+      file: int
+      loop_: bool
+    then:
+      - dfplayer.play:
+          file: !lambda 'return file;'
+          loop: !lambda 'return loop_;'
+  - service: dfplayer_play_folder
+    variables:
+      folder: int
+      file: int
+    then:
+      - dfplayer.play_folder:
+          folder: !lambda 'return folder;'
+          file: !lambda 'return file;'
+
+  - service: dfplayer_play_loop_folder
+    variables:
+      folder: int
+    then:
+      - dfplayer.play_folder:
+          folder: !lambda 'return folder;'
+          loop: true
+
+  - service: dfplayer_set_device_tf
+    then:
+      - dfplayer.set_device: TF_CARD
+
+  - service: dfplayer_set_device_usb
+    then:
+      - dfplayer.set_device: USB
+
+  - service: dfplayer_set_volume
+    variables:
+      volume: int
+    then:
+      - dfplayer.set_volume: !lambda 'return volume;'
+  - service: dfplayer_set_eq
+    variables:
+      preset: int
+    then:
+      - dfplayer.set_eq: !lambda 'return static_cast<dfplayer::EqPreset>(preset);'
+
+  - service: dfplayer_sleep
+    then:
+      - dfplayer.sleep
+
+  - service: dfplayer_reset
+    then:
+      - dfplayer.reset
+
+  - service: dfplayer_start
+    then:
+      - dfplayer.start
+
+  - service: dfplayer_pause
+    then:
+      - dfplayer.pause
+
+  - service: dfplayer_stop
+    then:
+      - dfplayer.stop
+
+  - service: dfplayer_random
+    then:
+      - dfplayer.random
+
+  - service: dfplayer_volume_up
+    then:
+      - dfplayer.volume_up
+
+  - service: dfplayer_volume_down
+    then:
+      - dfplayer.volume_down
